@@ -1,0 +1,249 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// CORE ENTITIES
+// ============================================
+
+// Recording - Audio/Video files with integrity tracking
+model Recording {
+  id          String   @id @default(uuid())
+  filename    String
+  originalName String
+  filePath    String
+  fileHash    String   // SHA-256 hash for integrity
+  fileSize    Int
+  mimeType    String
+  duration    Float?   // Duration in seconds
+  
+  // Metadata
+  caseId      String?
+  institution String?
+  location    String?
+  recordedAt  DateTime?
+  participants String?  // JSON array of participant names
+  
+  // Processing status
+  status      String   @default("pending") // pending, transcribing, analyzing, completed, error
+  
+  // Relationships
+  transcript    Transcript?
+  processEvents ProcessEvent[]
+  complianceReport ComplianceReport?
+  auditLogs     AuditLog[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Transcript - Speech-to-text output
+model Transcript {
+  id          String   @id @default(uuid())
+  recordingId String   @unique
+  recording   Recording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  
+  fullText    String   // Complete transcript
+  language    String   // Detected language
+  confidence  Float    // Overall confidence score
+  
+  // Speaker diarization data (JSON)
+  segments    String   // JSON array of {speaker, start, end, text, confidence}
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ProcessEvent - Timeline events extracted from transcripts
+model ProcessEvent {
+  id          String   @id @default(uuid())
+  recordingId String
+  recording   Recording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  
+  stepNumber  Int
+  action      String   // e.g., "Decision suggested", "Evidence presented"
+  speaker     String?
+  timestamp   String?  // Time in recording
+  eventTime   DateTime? // Actual event time if mentioned
+  
+  legalReference String? // Reference to law/article if mentioned
+  entities    String?  // JSON array of extracted entities
+  confidence  Float    @default(0.0)
+  
+  createdAt   DateTime @default(now())
+}
+
+// ============================================
+// LEGAL KNOWLEDGE BASE
+// ============================================
+
+// CaseType - Defines procedure requirements for different case types
+model CaseType {
+  id          String   @id @default(uuid())
+  name        String   // e.g., "Administrative offense", "Criminal investigation"
+  nameUz      String?  // Uzbek name
+  nameRu      String?  // Russian name
+  description String?
+  
+  // Required procedure (JSON arrays)
+  requiredSteps     String  // JSON: ["Step 1", "Step 2", ...]
+  forbiddenActions  String? // JSON: ["Action 1", ...]
+  timeLimits        String? // JSON: {step: hours/days}
+  
+  // Relationships
+  legalRules  LegalRule[]
+  complianceReports ComplianceReport[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// LegalRule - Individual laws and regulations
+model LegalRule {
+  id          String   @id @default(uuid())
+  code        String   // e.g., "CPC-123", "AdminCode-45"
+  title       String
+  titleUz     String?
+  titleRu     String?
+  fullText    String
+  source      String   // e.g., "Criminal Procedure Code", "Administrative Code"
+  
+  // Categorization
+  caseTypeId  String?
+  caseType    CaseType? @relation(fields: [caseTypeId], references: [id])
+  category    String?   // e.g., "Rights", "Procedure", "Evidence"
+  
+  // Effective dates
+  effectiveFrom DateTime?
+  effectiveTo   DateTime?
+  
+  isActive    Boolean  @default(true)
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ============================================
+// COMPLIANCE ANALYSIS
+// ============================================
+
+// ComplianceReport - Analysis results for a recording
+model ComplianceReport {
+  id          String   @id @default(uuid())
+  recordingId String   @unique
+  recording   Recording @relation(fields: [recordingId], references: [id], onDelete: Cascade)
+  
+  caseTypeId  String?
+  caseType    CaseType? @relation(fields: [caseTypeId], references: [id])
+  
+  // Scores
+  complianceScore Int      // 0-100
+  riskScore       Int      // 0-100 (higher = more risk)
+  severityLevel   String   // low, medium, high, critical
+  
+  // Summary
+  summary         String
+  recommendation  String?
+  
+  // Relationships
+  violations  Violation[]
+  biasFlags   BiasFlag[]
+  
+  reviewedBy  String?
+  reviewedAt  DateTime?
+  reviewNotes String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// Violation - Individual violations detected
+model Violation {
+  id              String   @id @default(uuid())
+  complianceReportId String
+  complianceReport ComplianceReport @relation(fields: [complianceReportId], references: [id], onDelete: Cascade)
+  
+  type            String   // missing_step, wrong_order, informal_decision, no_justification, retroactive
+  description     String
+  severity        String   // low, medium, high, critical
+  
+  // Evidence
+  evidenceText    String?  // Quote from transcript
+  evidenceTime    String?  // Timestamp in recording
+  
+  // Legal reference
+  violatedRule    String?  // Reference to LegalRule code
+  
+  createdAt       DateTime @default(now())
+}
+
+// BiasFlag - Statistical anomaly indicators
+model BiasFlag {
+  id              String   @id @default(uuid())
+  complianceReportId String
+  complianceReport ComplianceReport @relation(fields: [complianceReportId], references: [id], onDelete: Cascade)
+  
+  type            String   // ethnic, political, economic, regional, personal
+  description     String
+  confidence      Float    // 0-1 probability
+  
+  // Statistical evidence
+  deviationScore  Float?   // How much this deviates from norm
+  comparisonData  String?  // JSON: comparison metrics
+  
+  createdAt       DateTime @default(now())
+}
+
+// ============================================
+// SECURITY & AUDIT
+// ============================================
+
+// User - Human reviewers
+model User {
+  id          String   @id @default(uuid())
+  email       String   @unique
+  name        String
+  role        String   @default("reviewer") // admin, reviewer, analyst
+  passwordHash String?
+  
+  isActive    Boolean  @default(true)
+  lastLoginAt DateTime?
+  
+  auditLogs   AuditLog[]
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// AuditLog - Tamper-resistant activity log
+model AuditLog {
+  id          String   @id @default(uuid())
+  
+  action      String   // upload, view, analyze, review, export, delete
+  entityType  String   // recording, report, rule, etc.
+  entityId    String?
+  
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  
+  recordingId String?
+  recording   Recording? @relation(fields: [recordingId], references: [id])
+  
+  details     String?  // JSON with additional context
+  ipAddress   String?
+  userAgent   String?
+  
+  // Integrity
+  previousHash String? // Hash of previous log entry for chain integrity
+  entryHash   String?  // Hash of this entry
+  
+  createdAt   DateTime @default(now())
+}
