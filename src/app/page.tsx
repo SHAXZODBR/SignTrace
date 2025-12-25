@@ -4,34 +4,53 @@ import { useState, useEffect } from 'react';
 import Header from '@/components/Header';
 import Link from 'next/link';
 
-// Sample data - would come from API in production
-const recentCases = [
-  { id: 'CASE-2024-0892', type: 'Administrative Appeal', institution: 'Tashkent District Court', status: 'analyzing', risk: 'medium', compliance: 67, date: '2024-12-24' },
-  { id: 'CASE-2024-0891', type: 'Traffic Violation Hearing', institution: 'Samarkand Regional Police', status: 'completed', risk: 'low', compliance: 89, date: '2024-12-24' },
-  { id: 'CASE-2024-0890', type: 'Tax Inspection', institution: 'State Tax Committee', status: 'completed', risk: 'high', compliance: 42, date: '2024-12-23' },
-  { id: 'CASE-2024-0889', type: 'Criminal Investigation', institution: 'Bukhara Regional Police', status: 'transcribing', risk: 'critical', compliance: 28, date: '2024-12-23' },
-  { id: 'CASE-2024-0888', type: 'Municipal Permit Review', institution: 'Tashkent City Hall', status: 'pending', risk: null, compliance: null, date: '2024-12-22' },
-];
+interface CaseItem {
+  id: string;
+  type: string;
+  institution: string;
+  status: string;
+  risk: string | null;
+  compliance: number | null;
+  date: string;
+}
 
-const pendingActions = [
-  { id: 1, case: 'CASE-2024-0890', action: 'Review flagged violations', priority: 'high', age: '2 hours' },
-  { id: 2, case: 'CASE-2024-0889', action: 'Verify transcript accuracy', priority: 'critical', age: '4 hours' },
-  { id: 3, case: 'CASE-2024-0876', action: 'Approve compliance report', priority: 'medium', age: '1 day' },
-];
+interface ActionItem {
+  id: number;
+  case: string;
+  action: string;
+  priority: string;
+  age: string;
+}
+
+interface DashboardData {
+  stats: {
+    totalCases: number;
+    pendingReview: number;
+    highRiskCases: number;
+    avgCompliance: number;
+  };
+  recentCases: CaseItem[];
+  pendingActions: ActionItem[];
+}
 
 export default function Dashboard() {
-  const [stats, setStats] = useState({
-    totalCases: 1247,
-    pendingReview: 23,
-    highRiskCases: 7,
-    avgCompliance: 79,
-  });
-
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
 
   useEffect(() => {
     setCurrentTime(new Date());
     const timer = setInterval(() => setCurrentTime(new Date()), 60000);
+
+    // Fetch dashboard data
+    fetch('/api/dashboard')
+      .then(res => res.json())
+      .then(result => {
+        setData(result);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+
     return () => clearInterval(timer);
   }, []);
 
@@ -66,8 +85,8 @@ export default function Dashboard() {
       {/* Stats Grid */}
       <div className="stats-grid mb-8">
         <div className="stat-card">
-          <div className="stat-label">Total Cases</div>
-          <div className="stat-value">{stats.totalCases.toLocaleString()}</div>
+          <div className="stat-label">Jami ishlar</div>
+          <div className="stat-value">{loading ? '...' : data?.stats.totalCases.toLocaleString()}</div>
           <div className="stat-change positive">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
@@ -77,24 +96,24 @@ export default function Dashboard() {
         </div>
 
         <div className="stat-card">
-          <div className="stat-label">Pending Review</div>
-          <div className="stat-value">{stats.pendingReview}</div>
+          <div className="stat-label">Ko'rib chiqish kutilmoqda</div>
+          <div className="stat-value">{loading ? '...' : data?.stats.pendingReview}</div>
           <div className="stat-change" style={{ color: 'var(--text-muted)' }}>
-            Requires human review
+            Inson ko'rigi kerak
           </div>
         </div>
 
         <div className="stat-card">
-          <div className="stat-label">High Risk Cases</div>
-          <div className="stat-value" style={{ color: 'var(--danger)' }}>{stats.highRiskCases}</div>
+          <div className="stat-label">Yuqori xavfli</div>
+          <div className="stat-value" style={{ color: 'var(--danger)' }}>{loading ? '...' : data?.stats.highRiskCases}</div>
           <div className="stat-change negative">
-            Immediate attention needed
+            Shoshilinch e'tibor kerak
           </div>
         </div>
 
         <div className="stat-card">
-          <div className="stat-label">Avg. Compliance</div>
-          <div className="stat-value" style={{ color: 'var(--success)' }}>{stats.avgCompliance}%</div>
+          <div className="stat-label">O'rtacha muvofiqlik</div>
+          <div className="stat-value" style={{ color: 'var(--success)' }}>{loading ? '...' : data?.stats.avgCompliance}%</div>
           <div className="stat-change positive">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
@@ -129,7 +148,7 @@ export default function Dashboard() {
               </tr>
             </thead>
             <tbody>
-              {recentCases.map((caseItem) => (
+              {(data?.recentCases || []).map((caseItem: CaseItem) => (
                 <tr key={caseItem.id} style={{ cursor: 'pointer' }}>
                   <td>
                     <div style={{ fontWeight: 500, fontFamily: 'var(--font-mono)', fontSize: '0.8125rem' }}>
@@ -211,11 +230,11 @@ export default function Dashboard() {
           <div className="card">
             <div className="card-header" style={{ marginBottom: 'var(--space-4)' }}>
               <h3 className="card-title">Pending Actions</h3>
-              <span className="badge badge-processing">{pendingActions.length}</span>
+              <span className="badge badge-processing">{data?.pendingActions?.length || 0}</span>
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-              {pendingActions.map((action) => (
+              {(data?.pendingActions || []).map((action: ActionItem) => (
                 <div
                   key={action.id}
                   style={{
